@@ -50,6 +50,7 @@
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
 #include "llvm/Transforms/Scalar/InstSimplifyPass.h"
+#include "llvm/Transforms/Scalar/ExtraProtein.h"
 #include "llvm/Transforms/Utils.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include "llvm/Transforms/Utils/UnifyFunctionExitNodes.h"
@@ -99,6 +100,7 @@ namespace {
       (void) llvm::createDomPrinterPass();
       (void) llvm::createDomOnlyViewerPass();
       (void) llvm::createDomViewerPass();
+      (void) llvm::createExtraProteinLegacyPass();
       (void) llvm::createGCOVProfilerPass();
       (void) llvm::createPGOInstrumentationGenLegacyPass();
       (void) llvm::createPGOInstrumentationUseLegacyPass();

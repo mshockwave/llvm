@@ -43,8 +43,7 @@ bool ExtraProteinLegacyPass::runOnFunction(Function &F) {
   auto& LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
   if(LI.empty()) return false;
 
-  // (ExitLimit user, ExitLimit)
-  SmallVector<std::pair<Instruction*,const Value*>, 2> Worklist;
+  SmallVector<Use*, 2> Worklist;
   for(Loop* L : LI) {
     // Can only handle single exit
     auto* ExitingBB = L->getExitingBlock();
@@ -73,20 +72,16 @@ bool ExtraProteinLegacyPass::runOnFunction(Function &F) {
     auto processAscending = [Pred,&Worklist](CmpInst *Cmp) {
       if(Pred != Cmp->getPredicate())
         // IndVar is on RHS
-        Worklist.push_back(std::make_pair(cast<Instruction>(Cmp),
-                                          Cmp->getOperand(0)));
+        Worklist.push_back(&Cmp->getOperandUse(0));
       else
-        Worklist.push_back(std::make_pair(cast<Instruction>(Cmp),
-                                          Cmp->getOperand(1)));
+        Worklist.push_back(&Cmp->getOperandUse(1));
     };
 
     auto processDescending = [L,&Worklist](PHINode *IndVar) {
-      unsigned i;
-      for(i = 0; i < IndVar->getNumIncomingValues(); ++i){
-        if(L->contains(IndVar->getIncomingBlock(i))) continue;
+      for(Use& OpUse : IndVar->incoming_values()){
+        if(L->contains(IndVar->getIncomingBlock(OpUse))) continue;
         // Get the initial value
-        Worklist.push_back(std::make_pair(cast<Instruction>(IndVar),
-                                          IndVar->getIncomingValue(i)));
+        Worklist.push_back(&OpUse);
         break;
       }
     };
@@ -103,6 +98,7 @@ bool ExtraProteinLegacyPass::runOnFunction(Function &F) {
       else
         // ascending
         processAscending(Cmp);
+      break;
     }
     case CmpInst::ICMP_ULT:
     case CmpInst::ICMP_ULE:
@@ -114,6 +110,7 @@ bool ExtraProteinLegacyPass::runOnFunction(Function &F) {
       else
         // descending
         processDescending(IndVar);
+      break;
     }
     default:
       continue;
@@ -121,10 +118,10 @@ bool ExtraProteinLegacyPass::runOnFunction(Function &F) {
   }
 
   bool Changed = false;
-  for(const auto& P : Worklist) {
-    User* Usr = cast<User>(P.first);
-    const Value* Val = P.second;
-    LLVM_DEBUG(dbgs() << *Usr << " -> " << *Val << "\n");
+  for(Use* U : Worklist) {
+    Value* Val = U->get();
+    User* Usr = U->getUser();
+    LLVM_DEBUG(dbgs() << "Working on: " << *Val << " -> " << *Usr << "\n");
     auto* Ty = Val->getType();
     if(!Ty->isIntegerTy()) continue;
 
@@ -134,14 +131,21 @@ bool ExtraProteinLegacyPass::runOnFunction(Function &F) {
                                 ConstInt->getValue() * 2);
     }else{
       // Non constant, insert multiplication
-      if(!isa<Instruction>(Usr)) continue;
       auto* Two = ConstantInt::get(Ty, 2);
-      NewVal = BinaryOperator::Create(BinaryOperator::Mul,
-                                      const_cast<Value*>(Val), Two, "",
-                                      cast<Instruction>(Usr));
+      auto* Mul = BinaryOperator::Create(BinaryOperator::Mul,
+                                         const_cast<Value*>(Val), Two);
+      NewVal = cast<Value>(Mul);
+      // We can't insert instruction before a PHINode
+      if(auto* PN = dyn_cast<PHINode>(Usr)) {
+        auto* InBB = PN->getIncomingBlock(*U);
+        Mul->insertBefore(cast<Instruction>(InBB->getTerminator()));
+      }else if(auto* I = dyn_cast<Instruction>(Usr))
+        Mul->insertBefore(I);
+      else
+        continue;
     }
     Changed = true;
-    Usr->replaceUsesOfWith(const_cast<Value*>(Val), NewVal);
+    Usr->replaceUsesOfWith(Val, NewVal);
   }
 
   return Changed;

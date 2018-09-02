@@ -4,7 +4,8 @@
 #include "llvm/Pass.h"
 
 namespace llvm {
-FunctionPass* createExtraProteinLegacyPass();
+FunctionPass* createExtraProteinLegacyPass(uint32_t Duplicate = 2,
+                                           uint32_t Amend = 0);
 } // end namespace llvm
 
 #endif

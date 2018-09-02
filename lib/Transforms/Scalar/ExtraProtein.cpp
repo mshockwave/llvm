@@ -13,9 +13,23 @@ void initializeExtraProteinLegacyPassPass(PassRegistry&);
 } // end namespace llvm
 
 namespace {
-struct ExtraProteinLegacyPass : public FunctionPass {
+class ExtraProteinLegacyPass : public FunctionPass {
+  APInt Duplicate;
+  APInt Amend;
+
+public:
   static char ID;
-  ExtraProteinLegacyPass() : FunctionPass(ID) {
+  ExtraProteinLegacyPass()
+    : FunctionPass(ID),
+      Duplicate(APInt(32, 2)),
+      Amend(APInt(32, 0)) {
+    initializeExtraProteinLegacyPassPass(*PassRegistry::getPassRegistry());
+  }
+
+  ExtraProteinLegacyPass(const APInt& Factor, const APInt& Amount)
+    : FunctionPass(ID),
+      Duplicate(Factor),
+      Amend(Amount) {
     initializeExtraProteinLegacyPassPass(*PassRegistry::getPassRegistry());
   }
 
@@ -125,22 +139,41 @@ bool ExtraProteinLegacyPass::runOnFunction(Function &F) {
     auto* Ty = Val->getType();
     if(!Ty->isIntegerTy()) continue;
 
-    Value *NewVal;
+    Value *NewVal = nullptr;
     if(const auto* ConstInt = dyn_cast<ConstantInt>(Val)){
-      NewVal = ConstantInt::get(Ty,
-                                ConstInt->getValue() * 2);
+      APInt APVal(ConstInt->getValue());
+      if(Duplicate.getBoolValue())
+        APVal *= Duplicate;
+      if(Amend.getBoolValue())
+        APVal += Amend;
+      NewVal = ConstantInt::get(Ty, APVal);
     }else{
-      // Non constant, insert multiplication
-      auto* Two = ConstantInt::get(Ty, 2);
-      auto* Mul = BinaryOperator::Create(BinaryOperator::Mul,
-                                         const_cast<Value*>(Val), Two);
-      NewVal = cast<Value>(Mul);
+      // Non constant, insert multiplication and/or summation
+      SmallVector<BinaryOperator*, 2> BinOps;
+      if(Duplicate.getBoolValue()) {
+        auto* Factor = ConstantInt::get(Ty, Duplicate);
+        auto* Mul = BinaryOperator::Create(BinaryOperator::Mul,
+                                           Val,
+                                           Factor);
+        BinOps.push_back(Mul);
+        NewVal = cast<Value>(Mul);
+      }
+      if(Amend.getBoolValue()) {
+        auto* Amount = ConstantInt::get(Ty, Amend);
+        auto* Add = BinaryOperator::Create(BinaryOperator::Add,
+                                           NewVal? NewVal : Val,
+                                           Amount);
+        BinOps.push_back(Add);
+        NewVal = cast<Value>(Add);
+      }
+
       // We can't insert instruction before a PHINode
       if(auto* PN = dyn_cast<PHINode>(Usr)) {
         auto* InBB = PN->getIncomingBlock(*U);
-        Mul->insertBefore(cast<Instruction>(InBB->getTerminator()));
+        for(auto* BinOp : BinOps)
+          BinOp->insertBefore(cast<Instruction>(InBB->getTerminator()));
       }else if(auto* I = dyn_cast<Instruction>(Usr))
-        Mul->insertBefore(I);
+        for(auto* BinOp : BinOps) BinOp->insertBefore(I);
       else
         continue;
     }
@@ -152,7 +185,7 @@ bool ExtraProteinLegacyPass::runOnFunction(Function &F) {
 }
 
 namespace llvm {
-FunctionPass* createExtraProteinLegacyPass() {
-  return new ExtraProteinLegacyPass();
+FunctionPass* createExtraProteinLegacyPass(uint32_t Duplicate, uint32_t Amend) {
+  return new ExtraProteinLegacyPass(APInt(32, Duplicate), APInt(32, Amend));
 }
 } // end namespace llvm
